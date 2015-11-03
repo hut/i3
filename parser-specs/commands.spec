@@ -1,7 +1,7 @@
 # vim:ts=2:sw=2:expandtab
 #
 # i3 - an improved dynamic tiling window manager
-# © 2009-2012 Michael Stapelberg and contributors (see also: LICENSE)
+# © 2009 Michael Stapelberg and contributors (see also: LICENSE)
 #
 # parser-specs/commands.spec: Specification file for generate-command-parser.pl
 # which will generate the appropriate header files for our C parser.
@@ -29,6 +29,7 @@ state INITIAL:
   'kill' -> KILL
   'open' -> call cmd_open()
   'fullscreen' -> FULLSCREEN
+  'sticky' -> STICKY
   'split' -> SPLIT
   'floating' -> FLOATING
   'mark' -> MARK
@@ -37,18 +38,21 @@ state INITIAL:
   'rename' -> RENAME
   'nop' -> NOP
   'scratchpad' -> SCRATCHPAD
+  'title_format' -> TITLE_FORMAT
   'mode' -> MODE
   'bar' -> BAR
 
 state CRITERIA:
-  ctype = 'class' -> CRITERION
-  ctype = 'instance' -> CRITERION
+  ctype = 'class'       -> CRITERION
+  ctype = 'instance'    -> CRITERION
   ctype = 'window_role' -> CRITERION
-  ctype = 'con_id' -> CRITERION
-  ctype = 'id' -> CRITERION
-  ctype = 'con_mark' -> CRITERION
-  ctype = 'title' -> CRITERION
-  ctype = 'urgent' -> CRITERION
+  ctype = 'con_id'      -> CRITERION
+  ctype = 'id'          -> CRITERION
+  ctype = 'window_type' -> CRITERION
+  ctype = 'con_mark'    -> CRITERION
+  ctype = 'title'       -> CRITERION
+  ctype = 'urgent'      -> CRITERION
+  ctype = 'workspace'   -> CRITERION
   ']' -> call cmd_criteria_match_windows(); INITIAL
 
 state CRITERION:
@@ -76,7 +80,8 @@ state DEBUGLOG:
   argument = 'toggle', 'on', 'off'
     -> call cmd_debuglog($argument)
 
-# border normal|none|1pixel|toggle|1pixel
+# border normal|pixel [<n>]
+# border none|1pixel|toggle
 state BORDER:
   border_style = 'normal', 'pixel'
     -> BORDER_WIDTH
@@ -179,6 +184,11 @@ state FULLSCREEN_COMPAT:
   end
       -> call cmd_fullscreen("toggle", "output")
 
+# sticky enable|disable|toggle
+state STICKY:
+  action = 'enable', 'disable', 'toggle'
+      -> call cmd_sticky($action)
+
 # split v|h|vertical|horizontal
 state SPLIT:
   direction = 'horizontal', 'vertical', 'v', 'h'
@@ -189,10 +199,12 @@ state FLOATING:
   floating = 'enable', 'disable', 'toggle'
       -> call cmd_floating($floating)
 
-# mark <mark>
+# mark [--toggle] <mark>
 state MARK:
+  toggle = '--toggle'
+      ->
   mark = string
-      -> call cmd_mark($mark)
+      -> call cmd_mark($mark, $toggle)
 
 # unmark [mark]
 state UNMARK:
@@ -205,16 +217,18 @@ state UNMARK:
 state RESIZE:
   way = 'grow', 'shrink'
       -> RESIZE_DIRECTION
+  set = 'set'
+      -> RESIZE_SET
 
 state RESIZE_DIRECTION:
   direction = 'up', 'down', 'left', 'right', 'width', 'height'
       -> RESIZE_PX
 
 state RESIZE_PX:
-  resize_px = word
+  resize_px = number
       -> RESIZE_TILING
   end
-      -> call cmd_resize($way, $direction, "10", "10")
+      -> call cmd_resize($way, $direction, 10, 10)
 
 state RESIZE_TILING:
   'px'
@@ -222,15 +236,29 @@ state RESIZE_TILING:
   'or'
       -> RESIZE_TILING_OR
   end
-      -> call cmd_resize($way, $direction, $resize_px, "10")
+      -> call cmd_resize($way, $direction, &resize_px, 10)
 
 state RESIZE_TILING_OR:
-  resize_ppt = word
+  resize_ppt = number
       -> RESIZE_TILING_FINAL
 
 state RESIZE_TILING_FINAL:
   'ppt', end
-      -> call cmd_resize($way, $direction, $resize_px, $resize_ppt)
+      -> call cmd_resize($way, $direction, &resize_px, &resize_ppt)
+
+state RESIZE_SET:
+  width = number
+      -> RESIZE_WIDTH
+
+state RESIZE_WIDTH:
+  'px'
+      ->
+  height = number
+      -> RESIZE_HEIGHT
+
+state RESIZE_HEIGHT:
+  'px', end
+      -> call cmd_resize_set(&width, &height)
 
 # rename workspace <name> to <name>
 # rename workspace to <name>
@@ -263,10 +291,12 @@ state RENAME_WORKSPACE_NEW_NAME:
 # move <direction> [<pixels> [px]]
 # move [window|container] [to] workspace [<str>|next|prev|next_on_output|prev_on_output|current]
 # move [window|container] [to] output <str>
+# move [window|container] [to] mark <str>
 # move [window|container] [to] scratchpad
 # move workspace to [output] <str>
 # move scratchpad
 # move [window|container] [to] [absolute] position [ [<pixels> [px] <pixels> [px]] | center ]
+# move [window|container] [to] position mouse|cursor|pointer
 state MOVE:
   'window'
       ->
@@ -278,6 +308,8 @@ state MOVE:
       -> MOVE_WORKSPACE
   'output'
       -> MOVE_TO_OUTPUT
+  'mark'
+      -> MOVE_TO_MARK
   'scratchpad'
       -> call cmd_move_scratchpad()
   direction = 'left', 'right', 'up', 'down'
@@ -288,16 +320,16 @@ state MOVE:
       -> MOVE_TO_ABSOLUTE_POSITION
 
 state MOVE_DIRECTION:
-  pixels = word
+  pixels = number
       -> MOVE_DIRECTION_PX
   end
-      -> call cmd_move_direction($direction, "10")
+      -> call cmd_move_direction($direction, 10)
 
 state MOVE_DIRECTION_PX:
   'px'
-      -> call cmd_move_direction($direction, $pixels)
+      -> call cmd_move_direction($direction, &pixels)
   end
-      -> call cmd_move_direction($direction, $pixels)
+      -> call cmd_move_direction($direction, &pixels)
 
 state MOVE_WORKSPACE:
   'to '
@@ -319,6 +351,10 @@ state MOVE_TO_OUTPUT:
   output = string
       -> call cmd_move_con_to_output($output)
 
+state MOVE_TO_MARK:
+  mark = string
+      -> call cmd_move_con_to_mark($mark)
+
 state MOVE_WORKSPACE_TO_OUTPUT:
   'output'
       ->
@@ -332,18 +368,20 @@ state MOVE_TO_ABSOLUTE_POSITION:
 state MOVE_TO_POSITION:
   'center'
       -> call cmd_move_window_to_center($method)
-  coord_x = word
+  'mouse', 'cursor', 'pointer'
+      -> call cmd_move_window_to_mouse()
+  coord_x = number
       -> MOVE_TO_POSITION_X
 
 state MOVE_TO_POSITION_X:
   'px'
       ->
-  coord_y = word
+  coord_y = number
       -> MOVE_TO_POSITION_Y
 
 state MOVE_TO_POSITION_Y:
   'px', end
-      -> call cmd_move_window_to_position($method, $coord_x, $coord_y)
+      -> call cmd_move_window_to_position($method, &coord_x, &coord_y)
 
 # mode <string>
 state MODE:
@@ -359,6 +397,10 @@ state NOP:
 state SCRATCHPAD:
   'show'
       -> call cmd_scratchpad_show()
+
+state TITLE_FORMAT:
+  format = string
+      -> call cmd_title_format($format)
 
 # bar (hidden_state hide|show|toggle)|(mode dock|hide|invisible|toggle) [<bar_id>]
 state BAR:

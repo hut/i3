@@ -144,13 +144,40 @@ is(parser_calls("\nworkspace test"),
 ################################################################################
 
 is(parser_calls('unknown_literal'),
-   "ERROR: Expected one of these tokens: <end>, '[', 'move', 'exec', 'exit', 'restart', 'reload', 'shmlog', 'debuglog', 'border', 'layout', 'append_layout', 'workspace', 'focus', 'kill', 'open', 'fullscreen', 'split', 'floating', 'mark', 'unmark', 'resize', 'rename', 'nop', 'scratchpad', 'mode', 'bar'\n" .
+   "ERROR: Expected one of these tokens: <end>, '[', " .
+   "'move', " .
+   "'exec', " .
+   "'exit', " .
+   "'restart', " .
+   "'reload', " .
+   "'shmlog', " .
+   "'debuglog', " .
+   "'border', " .
+   "'layout', " .
+   "'append_layout', " .
+   "'workspace', " .
+   "'focus', " .
+   "'kill', " .
+   "'open', " .
+   "'fullscreen', " .
+   "'sticky', " .
+   "'split', " .
+   "'floating', " .
+   "'mark', " .
+   "'unmark', " .
+   "'resize', " .
+   "'rename', " .
+   "'nop', " .
+   "'scratchpad', " .
+   "'title_format', " .
+   "'mode', " .
+   "'bar'\n" .
    "ERROR: Your command: unknown_literal\n" .
    "ERROR:               ^^^^^^^^^^^^^^^",
    'error for unknown literal ok');
 
 is(parser_calls('move something to somewhere'),
-   "ERROR: Expected one of these tokens: 'window', 'container', 'to', 'workspace', 'output', 'scratchpad', 'left', 'right', 'up', 'down', 'position', 'absolute'\n" .
+   "ERROR: Expected one of these tokens: 'window', 'container', 'to', 'workspace', 'output', 'mark', 'scratchpad', 'left', 'right', 'up', 'down', 'position', 'absolute'\n" .
    "ERROR: Your command: move something to somewhere\n" .
    "ERROR:                    ^^^^^^^^^^^^^^^^^^^^^^",
    'error for unknown literal ok');
@@ -189,7 +216,7 @@ is(parser_calls('workspace "foo\\\\\\"bar"'),
 ################################################################################
 
 is(parser_calls("resize shrink width 10 px or"),
-   "ERROR: Expected one of these tokens: <word>\n" .
+   "ERROR: Expected one of these tokens: <number>\n" .
    "ERROR: Your command: resize shrink width 10 px or\n" .
    "ERROR:                                           ",
    "error for resize command with incomplete 'or'-construction ok");

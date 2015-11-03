@@ -2,12 +2,20 @@ language: c
 compiler:
   - gcc
   - clang
+addons:
+  apt:
+    sources:
+    - llvm-toolchain-precise-3.5
+    # ubuntu-toolchain-r-test contains libstdc++6 >= 4.8 which libllvm3.5 needs.
+    - ubuntu-toolchain-r-test
+    packages:
+    - clang-format-3.5
+    - libllvm3.5
 before_install:
   # The travis VMs run on Ubuntu 12.04 which is very old and a huge pain to get
   # into a state where we can build a recent version of i3 :(.
   - "echo 'deb http://archive.ubuntu.com/ubuntu/ trusty main universe' | sudo tee /etc/apt/sources.list.d/trusty.list"
   - "echo 'APT::Default-Release \"precise\";' | sudo tee /etc/apt/apt.conf.d/default-release"
-  - "echo 'deb http://archive.ubuntu.com/ubuntu/ utopic main universe' | sudo tee /etc/apt/sources.list.d/utopic.list"
 
   - "echo 'Package: libc6' > /tmp/pin"
   - "echo 'Pin: release n=trusty' >> /tmp/pin"
@@ -32,9 +40,7 @@ before_install:
   - sudo cp /tmp/pin /etc/apt/preferences.d/trustypin
   - sudo apt-get update
   - sudo apt-get install -t trusty libc6 libc6-dev
-  - sudo apt-get install --no-install-recommends devscripts equivs
-  - sudo apt-get install -t utopic clang-format-3.5
-  - clang-format-3.5 --version
+  - sudo apt-get install --no-install-recommends devscripts equivs xdotool
 install:
   - sudo mk-build-deps --install --remove --tool 'apt-get --no-install-recommends' debian/control
   # Install as many dependencies as possible via apt because cpanm is not very reliable/easy to debug.
@@ -45,3 +51,22 @@ script:
   - CFLAGS="-Wformat -Wformat-security -Wextra -Wno-unused-parameter -Werror" make -j
   - (cd testcases && xvfb-run ./complete-run.pl --parallel=1 || (cat latest/complete-run.log; false))
   - clang-format-3.5 -i $(find . -name "*.[ch]" | tr '\n' ' ') && git diff --exit-code || (echo 'Code was not formatted using clang-format!'; false)
+  - |
+    funcs='malloc|calloc|realloc|strdup|strndup|asprintf|write'
+    cstring='"([^"\\]|\\.)*"'
+    cchar="'[^\\\\]'|'\\\\.[^']*'"
+    regex="^([^'\"]|${cstring}|${cchar})*\<(${funcs})\>"
+    detected=0
+    while IFS= read -r file; do
+        if { cpp -w -fpreprocessed "$file" || exit "$?"; } | grep -E -- "$regex"; then
+            echo "^ $file calls a function that has a safe counterpart."
+            detected=1
+        fi
+    done << EOF
+    $(find -name '*.c' -not -name safewrappers.c -not -name strndup.c)
+    EOF
+    if [ "$detected" -ne 0 ]; then
+        echo
+        echo "Calls of functions that have safe counterparts were detected."
+        exit 1
+    fi

@@ -4,7 +4,7 @@
  * vim:ts=4:sw=4:expandtab
  *
  * i3 - an improved dynamic tiling window manager
- * © 2009-2013 Michael Stapelberg and contributors (see also: LICENSE)
+ * © 2009 Michael Stapelberg and contributors (see also: LICENSE)
  *
  * manage.c: Initially managing new windows (or existing ones on restart).
  *
@@ -164,24 +164,15 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
 
     DLOG("Managing window 0x%08x\n", window);
 
-    i3Window *cwindow = scalloc(sizeof(i3Window));
+    i3Window *cwindow = scalloc(1, sizeof(i3Window));
     cwindow->id = window;
     cwindow->depth = get_visual_depth(attr->visual);
 
-    /* We need to grab the mouse buttons for click to focus */
+    /* We need to grab buttons 1-3 for click-to-focus and buttons 1-5
+     * to allow for mouse bindings using --whole-window to work correctly. */
     xcb_grab_button(conn, false, window, XCB_EVENT_MASK_BUTTON_PRESS,
                     XCB_GRAB_MODE_SYNC, XCB_GRAB_MODE_ASYNC, root, XCB_NONE,
-                    1 /* left mouse button */,
-                    XCB_BUTTON_MASK_ANY /* don’t filter for any modifiers */);
-
-    xcb_grab_button(conn, false, window, XCB_EVENT_MASK_BUTTON_PRESS,
-                    XCB_GRAB_MODE_SYNC, XCB_GRAB_MODE_ASYNC, root, XCB_NONE,
-                    2 /* middle mouse button */,
-                    XCB_BUTTON_MASK_ANY /* don’t filter for any modifiers */);
-
-    xcb_grab_button(conn, false, window, XCB_EVENT_MASK_BUTTON_PRESS,
-                    XCB_GRAB_MODE_SYNC, XCB_GRAB_MODE_ASYNC, root, XCB_NONE,
-                    3 /* right mouse button */,
+                    XCB_BUTTON_INDEX_ANY,
                     XCB_BUTTON_MASK_ANY /* don’t filter for any modifiers */);
 
     /* update as much information as possible so far (some replies may be NULL) */
@@ -209,6 +200,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
 
     /* check if the window needs WM_TAKE_FOCUS */
     cwindow->needs_take_focus = window_supports_protocol(cwindow->id, A_WM_TAKE_FOCUS);
+
+    /* read the preferred _NET_WM_WINDOW_TYPE atom */
+    cwindow->window_type = xcb_get_preferred_window_type(type_reply);
 
     /* Where to start searching for a container that swallows the new one? */
     Con *search_at = croot;
@@ -300,6 +294,7 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         if (match != NULL && match->insert_where != M_BELOW) {
             DLOG("Removing match %p from container %p\n", match, nc);
             TAILQ_REMOVE(&(nc->swallow_head), match, matches);
+            match_free(match);
         }
     }
 
@@ -307,6 +302,13 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     if (nc->window != NULL && nc->window != cwindow) {
         if (!restore_kill_placeholder(nc->window->id)) {
             DLOG("Uh?! Container without a placeholder, but with a window, has swallowed this to-be-managed window?!\n");
+        } else {
+            /* Remove remaining criteria, the first swallowed window wins. */
+            while (!TAILQ_EMPTY(&(nc->swallow_head))) {
+                Match *first = TAILQ_FIRST(&(nc->swallow_head));
+                TAILQ_REMOVE(&(nc->swallow_head), first, matches);
+                match_free(first);
+            }
         }
     }
     nc->window = cwindow;
@@ -383,6 +385,9 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
         want_floating = true;
     }
 
+    if (xcb_reply_contains_atom(state_reply, A__NET_WM_STATE_STICKY))
+        nc->sticky = true;
+
     FREE(state_reply);
     FREE(type_reply);
 
@@ -424,6 +429,17 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
     /* dock clients cannot be floating, that makes no sense */
     if (cwindow->dock)
         want_floating = false;
+
+    /* Plasma windows set their geometry in WM_SIZE_HINTS. */
+    if ((wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_US_POSITION || wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_POSITION) &&
+        (wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_US_SIZE || wm_size_hints.flags & XCB_ICCCM_SIZE_HINT_P_SIZE)) {
+        DLOG("We are setting geometry according to wm_size_hints x=%d y=%d w=%d h=%d\n",
+             wm_size_hints.x, wm_size_hints.y, wm_size_hints.width, wm_size_hints.height);
+        geom->x = wm_size_hints.x;
+        geom->y = wm_size_hints.y;
+        geom->width = wm_size_hints.width;
+        geom->height = wm_size_hints.height;
+    }
 
     /* Store the requested geometry. The width/height gets raised to at least
      * 75x50 when entering floating mode, which is the minimum size for a
@@ -508,6 +524,18 @@ void manage_window(xcb_window_t window, xcb_get_window_attributes_cookie_t cooki
 
     /* Send an event about window creation */
     ipc_send_window_event("new", nc);
+
+    if (set_focus && assignment_for(cwindow, A_NO_FOCUS) != NULL) {
+        /* The first window on a workspace should always be focused. We have to
+         * compare with == 1 because the container has already been inserted at
+         * this point. */
+        if (con_num_children(ws) == 1) {
+            DLOG("This is the first window on this workspace, ignoring no_focus.\n");
+        } else {
+            DLOG("no_focus was set for con = %p, not setting focus.\n", nc);
+            set_focus = false;
+        }
+    }
 
     /* Defer setting focus after the 'new' event has been sent to ensure the
      * proper window event sequence. */
